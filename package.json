@@ -1,0 +1,52 @@
+{
+  "name": "99tech",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test:ui": "cross-env TEST_SUITE=ui playwright test --config=playwright.config.js --grep=\"@ui\"",
+    "test:api": "cross-env TEST_SUITE=api playwright test --config=playwright.config.js --grep=\"@api\"",
+    "test:regression": "cross-env TEST_SUITE=regression playwright test --config=playwright.config.js --grep=\"@regression\"",
+    "test:performance": "cross-env TEST_SUITE=performance playwright test --config=playwright.config.js --grep=\"@performance\"",
+    "test:all": "cross-env TEST_SUITE=all playwright test --config=playwright.config.js",
+    "test:headed": "cross-env TEST_SUITE=ui playwright test --config=playwright.config.js --headed --grep=\"@ui\"",
+    "test:debug": "cross-env TEST_SUITE=ui playwright test --config=playwright.config.js --debug --grep=\"@ui\"",
+    "allure:generate": "allure generate allure-results --clean -o allure-report",
+    "allure:open": "allure open allure-report",
+    "allure:serve": "allure serve allure-results",
+    "report": "npm run allure:generate && npm run allure:open",
+    "clean": "rimraf allure-results allure-report test-results logs/*.log",
+    "clean:logs": "rimraf logs/*.log",
+    "install:browsers": "playwright install"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git@eruoni:Eruoni/99tech.git"
+  },
+  "keywords": [
+    "playwright",
+    "jasmine",
+    "automation",
+    "testing",
+    "orangehrm",
+    "allure",
+    "winston"
+  ],
+  "author": "Tung Pham",
+  "license": "ISC",
+  "devDependencies": {
+    "@playwright/test": "^1.54.1",
+    "@types/node": "^24.1.0",
+    "@types/winston": "^2.4.4",
+    "allure-commandline": "^2.34.1",
+    "allure-playwright": "^3.3.2",
+    "cross-env": "^7.0.3",
+    "dotenv": "^17.2.1",
+    "rimraf": "^6.0.1",
+    "typescript": "^5.8.3"
+  },
+  "dependencies": {
+    "winston": "^3.17.0"
+  }
+}
