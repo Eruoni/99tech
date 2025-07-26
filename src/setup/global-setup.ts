@@ -4,8 +4,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import dotenv from 'dotenv';
 import logger from '../config/logger.js';
-import { ApiHelper } from '../helpers/ApiHelper.js';
-import type { Environment, Cookie } from '../types/index.js';
+import type { Environment } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -15,6 +14,7 @@ dotenv.config();
 
 /**
  * Global setup function that runs before all tests
+ * Optimized for OAuth applications - no stored authentication
  * @param config - Playwright full configuration
  */
 async function globalSetup(config: FullConfig): Promise<void> {
@@ -23,7 +23,8 @@ async function globalSetup(config: FullConfig): Promise<void> {
   logger.info('🚀 Starting Global Setup', {
     timestamp: new Date().toISOString(),
     workers: config.workers,
-    projects: config.projects.map(p => p.name)
+    projects: config.projects.map(p => p.name),
+    testSuite: process.env.TEST_SUITE || 'all'
   });
 
   try {
@@ -39,24 +40,25 @@ async function globalSetup(config: FullConfig): Promise<void> {
     // 4. Verify test site availability
     await verifyTestSiteAvailability();
 
-    // 5. Setup authentication and save state
-    await setupAuthentication();
+    // 5. Verify basic application endpoints
+    await verifyApplicationEndpoints();
 
-    // 6. Initialize test data
-    await initializeTestData();
-
-    // 7. Clean previous test artifacts
+    // 6. Clean previous test artifacts
     await cleanPreviousArtifacts();
 
-    // 8. Setup performance monitoring
+    // 7. Setup performance monitoring
     await setupPerformanceMonitoring();
+
+    // 8. Setup test environment info
+    await setupTestEnvironmentInfo();
 
     const setupEndTime = Date.now();
     const setupDuration = setupEndTime - setupStartTime;
 
     logger.info('✅ Global Setup Completed Successfully', {
       duration: `${setupDuration}ms`,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
+      environment: process.env.NODE_ENV || 'test'
     });
 
   } catch (error) {
@@ -84,13 +86,15 @@ async function createDirectories(): Promise<void> {
   const directories = [
     'logs',
     'test-results',
+    'test-results/reports',
     'allure-results',
-    'allure-report',
+    'allure-report', 
     'screenshots',
     'videos',
     'traces',
     'downloads',
-    'auth'
+    'test-data',
+    'config'
   ];
 
   logger.info('📁 Creating necessary directories');
@@ -107,6 +111,8 @@ async function createDirectories(): Promise<void> {
       }
     }
   }
+
+  logger.info('✅ Directory structure created');
 }
 
 /**
@@ -117,16 +123,37 @@ async function validateEnvironment(): Promise<void> {
 
   const requiredEnvVars: (keyof Environment)[] = [
     'BASE_URL',
-    'API_BASE_URL',
+    'API_BASE_URL', 
     'USERNAME',
     'PASSWORD'
   ];
 
-  const missingVars: string[] = [];
+  const optionalEnvVars: (keyof Environment)[] = [
+    'BROWSER',
+    'HEADLESS',
+    'VIEWPORT_WIDTH',
+    'VIEWPORT_HEIGHT',
+    'TIMEOUT',
+    'API_TIMEOUT',
+    'WORKERS'
+  ];
 
+  const missingVars: string[] = [];
+  const configuredVars: Record<string, any> = {};
+
+  // Check required variables
   for (const envVar of requiredEnvVars) {
     if (!process.env[envVar]) {
       missingVars.push(envVar);
+    } else {
+      configuredVars[envVar] = process.env[envVar];
+    }
+  }
+
+  // Check optional variables
+  for (const envVar of optionalEnvVars) {
+    if (process.env[envVar]) {
+      configuredVars[envVar] = process.env[envVar];
     }
   }
 
@@ -136,22 +163,49 @@ async function validateEnvironment(): Promise<void> {
     throw new Error(errorMessage);
   }
 
-  // Validate URLs format
-  const urls = [process.env.BASE_URL, process.env.API_BASE_URL];
+  // Validate URL formats
+  const urls = [
+    { name: 'BASE_URL', value: process.env.BASE_URL },
+    { name: 'API_BASE_URL', value: process.env.API_BASE_URL }
+  ];
+
   for (const url of urls) {
-    if (url && !isValidUrl(url)) {
-      const errorMessage = `Invalid URL format: ${url}`;
+    if (url.value && !isValidUrl(url.value)) {
+      const errorMessage = `Invalid URL format for ${url.name}: ${url.value}`;
       logger.error(errorMessage);
       throw new Error(errorMessage);
     }
   }
 
+  // Validate numeric values
+  const numericVars = [
+    { name: 'TIMEOUT', value: process.env.TIMEOUT, min: 1000 },
+    { name: 'API_TIMEOUT', value: process.env.API_TIMEOUT, min: 1000 },
+    { name: 'WORKERS', value: process.env.WORKERS, min: 1 },
+    { name: 'VIEWPORT_WIDTH', value: process.env.VIEWPORT_WIDTH, min: 320 },
+    { name: 'VIEWPORT_HEIGHT', value: process.env.VIEWPORT_HEIGHT, min: 240 }
+  ];
+
+  for (const numVar of numericVars) {
+    if (numVar.value) {
+      const numValue = parseInt(numVar.value);
+      if (isNaN(numValue) || numValue < numVar.min) {
+        const errorMessage = `Invalid ${numVar.name} value: ${numVar.value} (minimum: ${numVar.min})`;
+        logger.error(errorMessage);
+        throw new Error(errorMessage);
+      }
+    }
+  }
+
   logger.info('✅ Environment validation passed', {
-    baseUrl: process.env.BASE_URL,
-    apiBaseUrl: process.env.API_BASE_URL,
-    browser: process.env.BROWSER || 'chromium',
-    headless: process.env.HEADLESS,
-    testSuite: process.env.TEST_SUITE
+    requiredVars: requiredEnvVars.length,
+    configuredVars: Object.keys(configuredVars).length,
+    config: {
+      baseUrl: configuredVars.BASE_URL,
+      browser: configuredVars.BROWSER || 'chromium',
+      headless: configuredVars.HEADLESS || 'true',
+      testSuite: process.env.TEST_SUITE || 'all'
+    }
   });
 }
 
@@ -166,33 +220,43 @@ async function setupBrowsers(): Promise<void> {
 
   try {
     let browser;
+    const launchOptions = {
+      headless,
+      args: process.env.CI ? [
+        '--no-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--disable-web-security'
+      ] : []
+    };
     
     switch (browserType) {
       case 'firefox':
-        browser = await firefox.launch({ headless });
+        browser = await firefox.launch(launchOptions);
         break;
       case 'webkit':
-        browser = await webkit.launch({ headless });
+        browser = await webkit.launch(launchOptions);
         break;
       case 'chromium':
       default:
-        browser = await chromium.launch({ 
-          headless,
-          args: ['--no-sandbox', '--disable-dev-shm-usage']
-        });
+        browser = await chromium.launch(launchOptions);
         break;
     }
 
-    // Warm up browser by creating a page and navigating to a simple page
+    // Warm up browser by creating a context and page
     const context = await browser.newContext({
       viewport: {
         width: parseInt(process.env.VIEWPORT_WIDTH || '1280'),
         height: parseInt(process.env.VIEWPORT_HEIGHT || '720')
-      }
+      },
+      userAgent: 'OrangeHRM-TestFramework/1.0 (Playwright)'
     });
 
     const page = await context.newPage();
+    
+    // Test basic navigation
     await page.goto('about:blank');
+    await page.evaluate(() => document.readyState);
     
     await page.close();
     await context.close();
@@ -200,7 +264,8 @@ async function setupBrowsers(): Promise<void> {
 
     logger.info('✅ Browser setup completed', {
       browserType,
-      headless
+      headless,
+      ciMode: !!process.env.CI
     });
 
   } catch (error) {
@@ -218,50 +283,36 @@ async function setupBrowsers(): Promise<void> {
 async function verifyTestSiteAvailability(): Promise<void> {
   logger.info('🔗 Verifying test site availability');
 
-  const apiHelper = new ApiHelper();
-  await apiHelper.init();
-
   try {
-    // Check main site
+    // Check main site using browser
     const browser = await chromium.launch({ headless: true });
     const context = await browser.newContext();
     const page = await context.newPage();
 
+    const navigationStart = Date.now();
     const response = await page.goto(process.env.BASE_URL!, {
       waitUntil: 'networkidle',
       timeout: 30000
     });
+    const navigationTime = Date.now() - navigationStart;
 
     if (!response || !response.ok()) {
-      throw new Error(`Test site not available. Status: ${response?.status()}`);
+      throw new Error(`Test site not available. Status: ${response?.status()} ${response?.statusText()}`);
     }
 
+    // Get page title for verification
+    const pageTitle = await page.title();
+    
     await page.close();
     await context.close();
     await browser.close();
 
-    // Check API endpoints
-    const healthCheckEndpoints = [
-      '/web/index.php/auth/login',
-      '/web/index.php/dashboard/index'
-    ];
-
-    for (const endpoint of healthCheckEndpoints) {
-      try {
-        const apiResponse = await apiHelper.get(endpoint);
-        logger.debug('API endpoint check', {
-          endpoint,
-          status: apiResponse.status
-        });
-      } catch (error) {
-        logger.warn('API endpoint not available', {
-          endpoint,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      }
-    }
-
-    logger.info('✅ Test site verification completed');
+    logger.info('✅ Test site verification completed', {
+      url: process.env.BASE_URL,
+      status: response.status(),
+      navigationTime: `${navigationTime}ms`,
+      title: pageTitle
+    });
 
   } catch (error) {
     logger.error('Test site verification failed', {
@@ -269,144 +320,96 @@ async function verifyTestSiteAvailability(): Promise<void> {
       error: error instanceof Error ? error.message : String(error)
     });
     throw error;
-  } finally {
-    await apiHelper.dispose();
   }
 }
 
 /**
- * Setup authentication and save browser state
+ * Verify basic application endpoints are accessible
  */
-async function setupAuthentication(): Promise<void> {
-  logger.info('🔐 Setting up authentication');
-
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
-    viewport: {
-      width: parseInt(process.env.VIEWPORT_WIDTH || '1280'),
-      height: parseInt(process.env.VIEWPORT_HEIGHT || '720')
-    }
-  });
+async function verifyApplicationEndpoints(): Promise<void> {
+  logger.info('🔗 Verifying application endpoints');
 
   try {
+    // Use browser to check endpoints since API might require authentication
+    const browser = await chromium.launch({ headless: true });
+    const context = await browser.newContext();
     const page = await context.newPage();
 
-    // Navigate to login page
-    await page.goto(`${process.env.BASE_URL}/web/index.php/auth/login`);
-    
-    // Wait for login form
-    await page.waitForSelector('[name="username"]', { timeout: 10000 });
+    // Basic endpoints to check (should be accessible without auth)
+    const endpointsToCheck = [
+      { path: '/web/index.php/auth/login', description: 'Login page', expectAuth: false },
+    ];
 
-    // Fill login credentials
-    await page.fill('[name="username"]', process.env.USERNAME!);
-    await page.fill('[name="password"]', process.env.PASSWORD!);
+    const endpointResults: Array<{ path: string; status: number; accessible: boolean; description: string }> = [];
 
-    // Submit login form
-    await page.click('button[type="submit"]');
+    for (const endpoint of endpointsToCheck) {
+      try {
+        const fullUrl = `${process.env.BASE_URL}${endpoint.path}`;
+        const response = await page.goto(fullUrl, { 
+          waitUntil: 'networkidle',
+          timeout: 10000 
+        });
+        
+        const status = response?.status() || 0;
+        // For auth-required endpoints, redirects to login (302/200) are acceptable
+        const accessible = endpoint.expectAuth ? 
+          (status === 200 || status === 302) : 
+          status === 200;
+        
+        endpointResults.push({
+          path: endpoint.path,
+          status,
+          accessible,
+          description: endpoint.description
+        });
 
-    // Wait for successful login (dashboard or any authenticated page)
-    try {
-      await page.waitForURL('**/dashboard/**', { timeout: 15000 });
-    } catch {
-      // Try alternative success indicators
-      await page.waitForSelector('.oxd-topbar-header-breadcrumb', { timeout: 10000 });
-    }
+        logger.debug(`${endpoint.description} check`, {
+          path: endpoint.path,
+          status,
+          accessible,
+          finalUrl: page.url()
+        });
 
-    // Save authentication state
-    const authFile = path.join(__dirname, '../../auth/state.json');
-    await context.storageState({ path: authFile });
+      } catch (error) {
+        endpointResults.push({
+          path: endpoint.path,
+          status: 0,
+          accessible: false,
+          description: endpoint.description
+        });
 
-    // Save cookies for API authentication
-    const cookies = await context.cookies();
-    const cookiesFile = path.join(__dirname, '../../auth/cookies.json');
-    await fs.writeFile(cookiesFile, JSON.stringify(cookies, null, 2));
-
-    logger.info('✅ Authentication setup completed', {
-      authFile,
-      cookiesFile,
-      cookieCount: cookies.length
-    });
-
-  } catch (error) {
-    logger.error('Authentication setup failed', {
-      error: error instanceof Error ? error.message : String(error)
-    });
-
-    // Take screenshot for debugging
-    try {
-      const page = context.pages()[0];
-      if (page) {
-        await page.screenshot({ 
-          path: 'test-results/auth-failure.png',
-          fullPage: true 
+        logger.debug(`${endpoint.description} check failed`, {
+          path: endpoint.path,
+          error: error instanceof Error ? error.message : String(error)
         });
       }
-    } catch (screenshotError) {
-      logger.warn('Failed to take authentication failure screenshot');
     }
 
-    throw error;
-  } finally {
+    await page.close();
     await context.close();
     await browser.close();
+
+    const accessibleCount = endpointResults.filter(e => e.accessible).length;
+    
+    logger.info('✅ Application endpoints verification completed', {
+      totalChecked: endpointsToCheck.length,
+      accessible: accessibleCount,
+      results: endpointResults
+    });
+
+    // Only fail if login page is not accessible
+    const loginPageAccessible = endpointResults.find(e => e.path.includes('/auth/login'))?.accessible;
+    if (!loginPageAccessible) {
+      throw new Error('Login page is not accessible - application may be down');
+    }
+
+  } catch (error) {
+    logger.error('Application endpoints verification failed', {
+      error: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
   }
 }
-
-/**
- * Initialize test data
- */
-async function initializeTestData(): Promise<void> {
-  logger.info('📊 Initializing test data');
-
-  const testDataDir = path.join(__dirname, '../../test-data');
-  await fs.mkdir(testDataDir, { recursive: true });
-
-  // Create test data files
-  const testData = {
-    employees: [
-      {
-        firstName: 'Test',
-        lastName: 'Employee',
-        employeeId: 'EMP001',
-        email: 'test.employee@orangehrm.com'
-      },
-      {
-        firstName: 'Jane',
-        lastName: 'Doe',
-        employeeId: 'EMP002',
-        email: 'jane.doe@orangehrm.com'
-      }
-    ],
-    users: [
-      {
-        username: process.env.USERNAME!,
-        password: process.env.PASSWORD!,
-        role: 'Admin'
-      }
-    ],
-    testUrls: {
-      login: '/web/index.php/auth/login',
-      dashboard: '/web/index.php/dashboard/index',
-      pim: '/web/index.php/pim/viewEmployeeList',
-      admin: '/web/index.php/admin/viewSystemUsers'
-    },
-    apiEndpoints: {
-      employees: '/pim/employees',
-      users: '/admin/users',
-      auth: '/auth/login'
-    }
-  };
-
-  const testDataFile = path.join(testDataDir, 'testData.json');
-  await fs.writeFile(testDataFile, JSON.stringify(testData, null, 2));
-
-  logger.info('✅ Test data initialized', {
-    testDataFile,
-    employeeCount: testData.employees.length,
-    userCount: testData.users.length
-  });
-}
-
 /**
  * Clean previous test artifacts
  */
@@ -414,45 +417,76 @@ async function cleanPreviousArtifacts(): Promise<void> {
   logger.info('🧹 Cleaning previous test artifacts');
 
   const artifactDirs = [
-    'test-results',
-    'allure-results',
-    'screenshots',
-    'videos',
-    'traces'
+    { dir: 'test-results', patterns: ['.json', '.xml', '.html'] },
+    { dir: 'allure-results', patterns: ['.json', '.txt', '.properties'] },
+    { dir: 'screenshots', patterns: ['.png', '.jpg'] },
+    { dir: 'videos', patterns: ['.webm', '.mp4'] },
+    { dir: 'traces', patterns: ['.zip'] },
+    { dir: 'downloads', patterns: ['.*'] } // Clean all downloads
   ];
 
-  for (const dir of artifactDirs) {
+  let totalCleaned = 0;
+
+  for (const { dir, patterns } of artifactDirs) {
     try {
       const files = await fs.readdir(dir).catch(() => []);
+      let cleanedInDir = 0;
       
       for (const file of files) {
-        if (file.endsWith('.png') || file.endsWith('.webm') || 
-            file.endsWith('.zip') || file.endsWith('.json') ||
-            file.endsWith('.xml') || file.endsWith('.html')) {
+        const shouldClean = patterns.some(pattern => 
+          pattern === '.*' || file.endsWith(pattern)
+        );
+        
+        if (shouldClean) {
           await fs.unlink(path.join(dir, file));
+          cleanedInDir++;
+          totalCleaned++;
         }
       }
       
-      logger.debug(`Cleaned artifacts in: ${dir}`);
+      if (cleanedInDir > 0) {
+        logger.debug(`Cleaned ${cleanedInDir} files from: ${dir}`);
+      }
     } catch (error) {
       logger.warn(`Failed to clean artifacts in ${dir}`, {
         error: error instanceof Error ? error.message : String(error)
       });
     }
   }
+
+  logger.info('✅ Artifact cleanup completed', {
+    totalFilesRemoved: totalCleaned,
+    directoriesCleaned: artifactDirs.length
+  });
 }
 
 /**
- * Setup performance monitoring
+ * Setup performance monitoring configuration
  */
 async function setupPerformanceMonitoring(): Promise<void> {
   logger.info('📈 Setting up performance monitoring');
 
   const performanceConfig = {
-    pageLoadThreshold: parseInt(process.env.PAGE_LOAD_THRESHOLD || '5000'),
-    apiResponseThreshold: parseInt(process.env.API_RESPONSE_THRESHOLD || '3000'),
-    monitoringEnabled: true,
-    metricsCollection: true
+    enabled: true,
+    thresholds: {
+      pageLoadThreshold: parseInt(process.env.PAGE_LOAD_THRESHOLD || '5000'),
+      apiResponseThreshold: parseInt(process.env.API_RESPONSE_THRESHOLD || '3000'),
+      memoryUsageThreshold: 100 * 1024 * 1024, // 100MB
+      networkIdleThreshold: 2000 // 2 seconds
+    },
+    monitoring: {
+      collectNetworkMetrics: true,
+      collectMemoryMetrics: true,
+      collectTimingMetrics: true,
+      collectConsoleErrors: true
+    },
+    reporting: {
+      generatePerformanceReport: true,
+      includeResourceTiming: true,
+      includeUserTiming: true,
+      trackLongTasks: true
+    },
+    timestamp: new Date().toISOString()
   };
 
   const configDir = path.join(__dirname, '../../config');
@@ -461,7 +495,58 @@ async function setupPerformanceMonitoring(): Promise<void> {
   const performanceConfigFile = path.join(configDir, 'performance.json');
   await fs.writeFile(performanceConfigFile, JSON.stringify(performanceConfig, null, 2));
 
-  logger.info('✅ Performance monitoring configured', performanceConfig);
+  logger.info('✅ Performance monitoring configured', {
+    configFile: performanceConfigFile,
+    pageLoadThreshold: performanceConfig.thresholds.pageLoadThreshold,
+    apiResponseThreshold: performanceConfig.thresholds.apiResponseThreshold,
+    monitoringEnabled: performanceConfig.enabled
+  });
+}
+
+/**
+ * Setup test environment information
+ */
+async function setupTestEnvironmentInfo(): Promise<void> {
+  logger.info('ℹ️ Setting up test environment information');
+
+  const environmentInfo = {
+    framework: {
+      name: 'Playwright',
+      version: '1.54.1',
+      language: 'TypeScript',
+      testRunner: 'Jasmine'
+    },
+    environment: {
+      nodeVersion: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      ci: !!process.env.CI,
+      ciProvider: getCIProvider()
+    },
+    configuration: {
+      browser: process.env.BROWSER || 'chromium',
+      headless: process.env.HEADLESS === 'true',
+      workers: parseInt(process.env.WORKERS || '4'),
+      timeout: parseInt(process.env.TIMEOUT || '30000'),
+      testSuite: process.env.TEST_SUITE || 'all'
+    },
+    urls: {
+      baseUrl: process.env.BASE_URL,
+      apiBaseUrl: process.env.API_BASE_URL
+    },
+    timestamp: new Date().toISOString(),
+    setupDuration: 0 // Will be updated later
+  };
+
+  const envInfoFile = path.join(__dirname, '../../test-results/environment-info.json');
+  await fs.writeFile(envInfoFile, JSON.stringify(environmentInfo, null, 2));
+
+  logger.info('✅ Test environment information saved', {
+    envInfoFile,
+    framework: environmentInfo.framework.name,
+    platform: environmentInfo.environment.platform,
+    ci: environmentInfo.environment.ci
+  });
 }
 
 /**
@@ -471,9 +556,23 @@ async function emergencyCleanup(): Promise<void> {
   logger.warn('⚠️ Performing emergency cleanup');
 
   try {
-    // Remove partial auth files
-    const authFiles = ['auth/state.json', 'auth/cookies.json'];
-    for (const file of authFiles) {
+    // Clear any temporary files
+    const tempDirs = ['temp', '.temp', 'tmp'];
+    for (const dir of tempDirs) {
+      try {
+        await fs.rmdir(dir, { recursive: true });
+      } catch {
+        // Ignore if directory doesn't exist
+      }
+    }
+
+    // Clear any partial artifacts
+    const partialFiles = [
+      'test-results/environment-info.json',
+      'config/performance.json'
+    ];
+
+    for (const file of partialFiles) {
       try {
         await fs.unlink(file);
       } catch {
@@ -481,8 +580,6 @@ async function emergencyCleanup(): Promise<void> {
       }
     }
 
-    // Clear any browser processes (this is platform specific)
-    // For now, just log that we attempted cleanup
     logger.info('Emergency cleanup completed');
     
   } catch (error) {
@@ -504,6 +601,20 @@ function isValidUrl(url: string): boolean {
   } catch {
     return false;
   }
+}
+
+/**
+ * Detect CI provider
+ * @returns CI provider name or 'unknown'
+ */
+function getCIProvider(): string {
+  if (process.env.GITHUB_ACTIONS) return 'GitHub Actions';
+  if (process.env.JENKINS_URL) return 'Jenkins';
+  if (process.env.BUILDKITE) return 'Buildkite';
+  if (process.env.CIRCLECI) return 'CircleCI';
+  if (process.env.TRAVIS) return 'Travis CI';
+  if (process.env.CI) return 'Generic CI';
+  return 'Local';
 }
 
 export default globalSetup;

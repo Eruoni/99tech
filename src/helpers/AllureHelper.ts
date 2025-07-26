@@ -1,26 +1,20 @@
 import { allure } from 'allure-playwright';
+import { Page } from '@playwright/test';
 import logger from '../config/logger.js';
-import type { 
-  AllureStepOptions, 
-  AllureAttachment, 
-  AllureLabel, 
-  AllureLink,
-  LogContext 
-} from '../types/index.js';
 
 export class AllureHelper {
   private logger = logger;
 
   /**
-   * Add a step to the current test
+   * Add a simple step to the current test
    * @param stepName - Name of the step
    * @param status - Status of the step (passed, failed, broken, skipped)
    */
   addStep(stepName: string, status: 'passed' | 'failed' | 'broken' | 'skipped' = 'passed'): void {
     try {
+      this.logger.test.step(stepName, 'allure_step', { status });
+      
       allure.step(stepName, async () => {
-        this.logger.test.step(stepName, 'allure_step', { status });
-        
         if (status === 'failed') {
           throw new Error(`Step failed: ${stepName}`);
         }
@@ -71,17 +65,42 @@ export class AllureHelper {
         name,
         error: error instanceof Error ? error.message : String(error)
       });
+      // Fallback: attach as text
+      try {
+        this.addAttachment(name, String(data), 'text/plain');
+      } catch (fallbackError) {
+        this.logger.error('Failed to attach data as fallback text', {
+          name,
+          error: fallbackError instanceof Error ? fallbackError.message : String(fallbackError)
+        });
+      }
     }
   }
 
   /**
    * Attach screenshot to the current test
    * @param name - Name of the screenshot
-   * @param screenshot - Screenshot buffer
+   * @param screenshot - Screenshot buffer or page object
    */
-  attachScreenshot(name: string, screenshot: Buffer): void {
-    this.addAttachment(name, screenshot, 'image/png');
-    this.logger.test.screenshot(name, `attachment_${Date.now()}.png`);
+  async attachScreenshot(name: string, screenshot: Buffer | Page): Promise<void> {
+    try {
+      let screenshotBuffer: Buffer;
+      
+      if (Buffer.isBuffer(screenshot)) {
+        screenshotBuffer = screenshot;
+      } else {
+        // Take screenshot from page
+        screenshotBuffer = await screenshot.screenshot({ fullPage: true });
+      }
+      
+      this.addAttachment(name, screenshotBuffer, 'image/png');
+      this.logger.test.screenshot(name, `attachment_${Date.now()}.png`);
+    } catch (error) {
+      this.logger.error('Failed to attach screenshot', {
+        name,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 
   /**
@@ -310,8 +329,10 @@ export class AllureHelper {
    */
   addParameter(name: string, value: any, options: { mode?: 'default' | 'hidden' | 'masked' } = {}): void {
     try {
-      allure.parameter(name, value, options);
-      this.logger.debug('Allure parameter added', { name, value, options });
+      // Convert value to string if it's not already
+      const stringValue = typeof value === 'string' ? value : String(value);
+      allure.parameter(name, stringValue, options);
+      this.logger.debug('Allure parameter added', { name, value: stringValue, options });
     } catch (error) {
       this.logger.error('Failed to add Allure parameter', {
         name,
@@ -347,13 +368,13 @@ export class AllureHelper {
    */
   logExecutionTime(action: string, startTime: number, endTime: number): void {
     const duration = endTime - startTime;
-    this.addParameter(`${action} Duration (ms)`, duration);
+    this.addParameter(`${action} Duration (ms)`, duration.toString());
     this.attachText(`${action} Timing`, `
-      Action: ${action}
-      Start Time: ${new Date(startTime).toISOString()}
-      End Time: ${new Date(endTime).toISOString()}
-      Duration: ${duration}ms
-    `);
+Action: ${action}
+Start Time: ${new Date(startTime).toISOString()}
+End Time: ${new Date(endTime).toISOString()}
+Duration: ${duration}ms
+    `.trim());
     
     this.logger.test.performance(action, duration, parseInt(process.env.PAGE_LOAD_THRESHOLD || '5000'));
   }
@@ -415,43 +436,118 @@ export class AllureHelper {
   }
 
   /**
-   * Start a step with timing
+   * Add test case ID
+   * @param testCaseId - Test case identifier
+   */
+  setTestCaseId(testCaseId: string): void {
+    try {
+      allure.label('testId', testCaseId);
+      this.addParameter('Test Case ID', testCaseId);
+      this.logger.debug('Test case ID set', { testCaseId });
+    } catch (error) {
+      this.logger.error('Failed to set test case ID', {
+        testCaseId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Set test suite
+   * @param suiteName - Test suite name
+   */
+  setTestSuite(suiteName: string): void {
+    try {
+      allure.suite(suiteName);
+      this.logger.debug('Test suite set', { suiteName });
+    } catch (error) {
+      this.logger.error('Failed to set test suite', {
+        suiteName,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Execute a step with proper Allure step reporting and timing
    * @param stepName - Name of the step
    * @param stepFunction - Function to execute in the step
+   * @returns Result of the step function
    */
   async timedStep<T>(stepName: string, stepFunction: () => Promise<T>): Promise<T> {
     const startTime = Date.now();
-    let result: T;
     
-    await allure.step(stepName, async (): Promise<void> => {
-      try {
-        result = await stepFunction();
-        const endTime = Date.now();
-        this.logExecutionTime(stepName, startTime, endTime);
-      } catch (error) {
-        const endTime = Date.now();
-        this.logExecutionTime(stepName, startTime, endTime);
-        this.logger.test.error(error instanceof Error ? error : new Error(String(error)), {
-          step: stepName,
-          duration: endTime - startTime
-        });
-        throw error;
+    try {
+      this.logger.test.step(stepName, 'start', { startTime });
+      const result = await stepFunction();
+      const endTime = Date.now();
+      
+      this.logExecutionTime(stepName, startTime, endTime);
+      this.logger.test.step(stepName, 'completed', { 
+        duration: endTime - startTime,
+        status: 'passed'
+      });
+      
+      allure.step(stepName, async () => {});
+      return result;
+    } catch (error) {
+      const endTime = Date.now();
+      
+      this.logExecutionTime(stepName, startTime, endTime);
+      this.logger.test.error(error instanceof Error ? error : new Error(String(error)), {
+        step: stepName,
+        duration: endTime - startTime
+      });
+      
+      // Attach error details
+      if (error instanceof Error) {
+        this.attachText('Error Details', `
+Step: ${stepName}
+Error: ${error.message}
+Stack: ${error.stack || 'No stack trace available'}
+Duration: ${endTime - startTime}ms
+        `.trim());
       }
-    });
-    
-    return result!;
+      
+      allure.step(stepName, async () => {
+        throw error;
+      });
+      
+      throw error;
+    }
   }
 
   /**
    * Add API response as attachment
    * @param response - API response data
    * @param requestData - Request data (optional)
+   * @param endpoint - API endpoint (optional)
    */
-  attachApiResponse(response: any, requestData?: any): void {
-    if (requestData) {
-      this.attachJSON('API Request', requestData);
+  attachApiResponse(response: any, requestData?: any, endpoint?: string): void {
+    try {
+      if (requestData) {
+        this.attachJSON('API Request', {
+          endpoint: endpoint || 'Unknown',
+          timestamp: new Date().toISOString(),
+          data: requestData
+        });
+      }
+      
+      this.attachJSON('API Response', {
+        endpoint: endpoint || 'Unknown',
+        timestamp: new Date().toISOString(),
+        data: response
+      });
+      
+      if (endpoint) {
+        this.addParameter('API Endpoint', endpoint);
+      }
+    } catch (error) {
+      this.logger.error('Failed to attach API response', {
+        endpoint,
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
-    this.attachJSON('API Response', response);
   }
 
   /**
@@ -459,8 +555,14 @@ export class AllureHelper {
    * @param consoleLogs - Console log messages
    */
   attachConsoleLogs(consoleLogs: string[]): void {
-    if (consoleLogs.length > 0) {
-      this.attachText('Browser Console Logs', consoleLogs.join('\n'));
+    try {
+      if (consoleLogs.length > 0) {
+        this.attachText('Browser Console Logs', consoleLogs.join('\n'));
+      }
+    } catch (error) {
+      this.logger.error('Failed to attach console logs', {
+        error: error instanceof Error ? error.message : String(error)
+      });
     }
   }
 
@@ -469,6 +571,100 @@ export class AllureHelper {
    * @param metrics - Performance metrics object
    */
   attachPerformanceMetrics(metrics: Record<string, number>): void {
-    this.attachJSON('Performance Metrics', metrics);
+    try {
+      this.attachJSON('Performance Metrics', metrics);
+      
+      // Also add individual metrics as parameters
+      Object.entries(metrics).forEach(([key, value]) => {
+        this.addParameter(`Performance: ${key}`, `${value}ms`);
+      });
+    } catch (error) {
+      this.logger.error('Failed to attach performance metrics', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Add test environment info
+   * @param environmentInfo - Environment information
+   */
+  addEnvironmentInfo(environmentInfo: Record<string, string>): void {
+    try {
+      Object.entries(environmentInfo).forEach(([key, value]) => {
+        this.addEnvironment(key, value);
+      });
+    } catch (error) {
+      this.logger.error('Failed to add environment info', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Add test retry information
+   * @param retryCount - Current retry attempt
+   * @param maxRetries - Maximum retry attempts
+   */
+  addRetryInfo(retryCount: number, maxRetries: number): void {
+    try {
+      this.addParameter('Retry Count', retryCount.toString());
+      this.addParameter('Max Retries', maxRetries.toString());
+      
+      if (retryCount > 0) {
+        this.addTag('retry');
+        this.addParameter('Test Status', `Retry attempt ${retryCount} of ${maxRetries}`);
+      }
+    } catch (error) {
+      this.logger.error('Failed to add retry info', {
+        retryCount,
+        maxRetries,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Add browser information
+   * @param browserInfo - Browser information object
+   */
+  addBrowserInfo(browserInfo: {
+    name: string;
+    version?: string;
+    platform?: string;
+    viewport?: { width: number; height: number };
+  }): void {
+    try {
+      this.addParameter('Browser', browserInfo.name);
+      
+      if (browserInfo.version) {
+        this.addParameter('Browser Version', browserInfo.version);
+      }
+      
+      if (browserInfo.platform) {
+        this.addParameter('Platform', browserInfo.platform);
+      }
+      
+      if (browserInfo.viewport) {
+        this.addParameter('Viewport', `${browserInfo.viewport.width}x${browserInfo.viewport.height}`);
+      }
+    } catch (error) {
+      this.logger.error('Failed to add browser info', {
+        browserInfo,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+  }
+
+  /**
+   * Create singleton instance
+   */
+  private static instance: AllureHelper;
+  
+  static getInstance(): AllureHelper {
+    if (!AllureHelper.instance) {
+      AllureHelper.instance = new AllureHelper();
+    }
+    return AllureHelper.instance;
   }
 }
