@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { LoginPage } from "../../src/pages/LoginPage.js";
 import { AllureHelper } from "../../src/helpers/AllureHelper.js";
 import { configManager } from "../../src/config/configManager.js";
@@ -128,6 +128,133 @@ test.describe("Login Functionality @ui", () => {
       allure.addParameter("Final URL", currentUrl);
 
       logger.test.end("Valid Admin Login", "Authentication", "passed", Date.now());
+    });
+
+    test("Login Success: ESS @critical @smoke", async () => {
+      allure.setSeverity("critical");
+      allure.setTestCaseId("Login_4");
+      allure.setDescription("Verify that ESS user can login with valid credentials");
+
+      // Find admin account from test data
+      const essAccount = testAccounts.accounts.find((account: any) => account.role === "ESS" && account.active);
+      if (!essAccount) {
+        throw new Error("Disabled account not found in test data");
+      }
+
+      const disabledCredentials: UserCredentials = {
+        username: essAccount.username,
+        password: essAccount.password,
+        role: essAccount.role,
+      };
+
+      logger.test.start("Valid ESS Login", "Authentication");
+
+      // Navigate to login page
+      await loginPage.navigateToLogin();
+
+      // Verify login page elements
+      await loginPage.verifyLoginPageElements();
+      await loginPage.shouldBeOnLoginPage();
+
+      // Perform login
+      await loginPage.login(disabledCredentials);
+
+      // Verify successful login
+      await loginPage.shouldBeLoggedIn();
+      await loginPage.isLoginSuccessful();
+
+      const currentUrl = await loginPage.getCurrentUrl();
+
+      allure.addParameter("Login Status", "Success");
+      allure.addParameter("User Role", disabledCredentials.role);
+      allure.addParameter("Username", disabledCredentials.username);
+      allure.addParameter("Final URL", currentUrl);
+
+      logger.test.end("Valid ESS Login", "Authentication", "passed", Date.now());
+    });
+
+    test("Login Unsuccessfully: Invalid credentials @critical @smoke", async () => {
+      allure.setSeverity("critical");
+      allure.setTestCaseId("Login_5");
+      allure.setDescription("Verify that user cannot login with invalid credentials");
+
+      // Find admin account from test data
+      const essAccount = testAccounts.accounts.find((account: any) => account.role === "ESS" && account.active);
+      if (!essAccount) {
+        throw new Error("ESS account not found in test data");
+      }
+
+      const essCredentials: UserCredentials = {
+        username: essAccount.username,
+        password: TestUtils.generateRandomString(5),
+        role: essAccount.role,
+      };
+
+      logger.test.start("Invalid ESS Login", "Authentication");
+
+      // Navigate to login page
+      await loginPage.navigateToLogin();
+
+      // Verify login page elements
+      await loginPage.verifyLoginPageElements();
+      await loginPage.shouldBeOnLoginPage();
+
+      // Perform login
+      await loginPage.login(essCredentials, false);
+
+      // Verify successful login
+      const errorMessage = await loginPage.getLoginErrorMessage();
+      expect(errorMessage).toEqual('Invalid credentials')
+
+      const currentUrl = await loginPage.getCurrentUrl();
+      allure.addParameter("Login Status", "Fail");
+      allure.addParameter("User Role", essCredentials.role);
+      allure.addParameter("Username", essCredentials.username);
+      allure.addParameter("Final URL", currentUrl);
+
+      logger.test.end("Invalid ESS Login", "Authentication", "passed", Date.now());
+    });
+
+    test("Login Unsuccessfully: Account has been disabled @critical @smoke", async () => {
+      allure.setSeverity("critical");
+      allure.setTestCaseId("Login_6");
+      allure.setDescription("Verify that user cannot login with disabled credentials");
+
+      // Find admin account from test data
+      const disabledAccount = testAccounts.accounts.find((account: any) => account.active === false);
+      if (!disabledAccount) {
+        throw new Error("Admin account not found in test data");
+      }
+
+      const disabledCredentials: UserCredentials = {
+        username: disabledAccount.username,
+        password: disabledAccount.password,
+        role: disabledAccount.role,
+      };
+
+      logger.test.start("Disabled Account Login", "Authentication");
+
+      // Navigate to login page
+      await loginPage.navigateToLogin();
+
+      // Verify login page elements
+      await loginPage.verifyLoginPageElements();
+      await loginPage.shouldBeOnLoginPage();
+
+      // Perform login
+      await loginPage.login(disabledCredentials, false);
+
+      // Verify successful login
+      const errorMessage = await loginPage.getLoginErrorMessage();
+      expect(errorMessage).toEqual('Invalid credentials')
+
+      const currentUrl = await loginPage.getCurrentUrl();
+      allure.addParameter("Login Status", "Fail");
+      allure.addParameter("User Role", disabledCredentials.role);
+      allure.addParameter("Username", disabledCredentials.username);
+      allure.addParameter("Final URL", currentUrl);
+
+      logger.test.end("Disabled Account Login", "Authentication", "passed", Date.now());
     });
   });
 });
