@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { LoginPage } from "../../src/pages/LoginPage.js";
-import { AllureHelper } from "../../src/helpers/AllureHelper.js";
-import { configManager } from "../../src/config/configManager.js";
-import { TestUtils } from "../../src/utils/testUtils.js";
-import logger from "../../src/config/logger.js";
-import type { UserCredentials } from "../../src/types/index.js";
+import { LoginPage } from "../../src/pages/LoginPage";
+import { AllureHelper } from "../../src/helpers/AllureHelper";
+import { configManager } from "../../src/config/configManager";
+import { TestUtils } from "../../src/utils/testUtils";
+import logger from "../../src/config/logger";
+import type { UserCredentials } from "../../src/types/index";
 
 // Test suite configuration
 test.describe("Login Functionality @ui", () => {
@@ -135,13 +135,13 @@ test.describe("Login Functionality @ui", () => {
       allure.setTestCaseId("Login_4");
       allure.setDescription("Verify that ESS user can login with valid credentials");
 
-      // Find admin account from test data
+      // Find ess account from test data
       const essAccount = testAccounts.accounts.find((account: any) => account.role === "ESS" && account.active);
       if (!essAccount) {
         throw new Error("Disabled account not found in test data");
       }
 
-      const disabledCredentials: UserCredentials = {
+      const essCredentials: UserCredentials = {
         username: essAccount.username,
         password: essAccount.password,
         role: essAccount.role,
@@ -157,7 +157,7 @@ test.describe("Login Functionality @ui", () => {
       await loginPage.shouldBeOnLoginPage();
 
       // Perform login
-      await loginPage.login(disabledCredentials);
+      await loginPage.login(essCredentials);
 
       // Verify successful login
       await loginPage.shouldBeLoggedIn();
@@ -166,8 +166,8 @@ test.describe("Login Functionality @ui", () => {
       const currentUrl = await loginPage.getCurrentUrl();
 
       allure.addParameter("Login Status", "Success");
-      allure.addParameter("User Role", disabledCredentials.role);
-      allure.addParameter("Username", disabledCredentials.username);
+      allure.addParameter("User Role", essAccount.role);
+      allure.addParameter("Username", essAccount.username);
       allure.addParameter("Final URL", currentUrl);
 
       logger.test.end("Valid ESS Login", "Authentication", "passed", Date.now());
@@ -178,7 +178,7 @@ test.describe("Login Functionality @ui", () => {
       allure.setTestCaseId("Login_5");
       allure.setDescription("Verify that user cannot login with invalid credentials");
 
-      // Find admin account from test data
+      // Find ess account from test data
       const essAccount = testAccounts.accounts.find((account: any) => account.role === "ESS" && account.active);
       if (!essAccount) {
         throw new Error("ESS account not found in test data");
