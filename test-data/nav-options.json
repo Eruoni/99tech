@@ -1,0 +1,17 @@
+{
+  "navigationOptions": {
+    "Admin": [
+      "Admin",
+      "PIM",
+      "Recruitment",
+      "Performance",
+      "Directory",
+      "Claim"
+    ],
+    "ESS": [
+      "Performance",
+      "Directory",
+      "Claim"
+    ]
+  }
+}

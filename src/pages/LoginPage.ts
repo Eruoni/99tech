@@ -61,10 +61,6 @@ export class LoginPage extends BasePage {
   constructor(page: Page) {
     super(page);
     
-    // Setup page-specific configurations
-    this.allure.setFeature('Authentication');
-    this.allure.setStory('User Login');
-    
     logger.debug('LoginPage initialized');
   }
 
