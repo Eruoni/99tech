@@ -75,6 +75,24 @@ export class BasePage {
   }
 
   /**
+   * Wait for page to be idle (no network activity)
+   * @param timeout - Timeout in milliseconds
+   */
+  async waitForPageIdle(timeout: number = 30000): Promise<void> {
+    await this.allure.timedStep('Wait for page idle', async () => {
+      try {
+        await this.page.waitForLoadState('networkidle', { timeout });
+        this.logger.debug('Page idle state achieved');
+      } catch (error) {
+        this.logger.warn('Page idle wait timed out', {
+          timeout,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    });
+  }
+
+  /**
    * Wait for an element to be in a specific state
    * @param selector - Element selector
    * @param state - Element state to wait for
@@ -102,6 +120,89 @@ export class BasePage {
    */
   async waitForElementToBeHidden(selector: string, timeout: number = this.timeout): Promise<void> {
     await this.waitForElement(selector, 'hidden', timeout);
+  }
+
+  /**
+   * Check if element exists without waiting
+   * @param selector - Element selector
+   * @returns True if element exists
+   */
+  async elementExists(selector: string): Promise<boolean> {
+    return await this.allure.timedStep(`Check if element exists: ${selector}`, async () => {
+      try {
+        const element = await this.page.$(selector);
+        const exists = element !== null;
+        
+        this.logger.debug('Element existence check', {
+          selector,
+          exists
+        });
+        
+        return exists;
+      } catch {
+        return false;
+      }
+    });
+  }
+
+  /**
+   * Get element count
+   * @param selector - Element selector
+   * @returns Number of matching elements
+   */
+  async getElementCount(selector: string): Promise<number> {
+    return await this.allure.timedStep(`Get element count: ${selector}`, async () => {
+      try {
+        const count = await this.page.locator(selector).count();
+        
+        this.allure.addParameter('Element Count', count);
+        this.logger.test.step('Get Element Count Action', 'getElementCount', {
+          selector,
+          count
+        });
+        
+        return count;
+      } catch {
+        return 0;
+      }
+    });
+  }
+
+  /**
+   * Scroll element into view
+   * @param selector - Element selector
+   */
+  async scrollIntoView(selector: string): Promise<void> {
+    await this.allure.timedStep(`Scroll into view: ${selector}`, async () => {
+      try {
+        await this.page.locator(selector).scrollIntoViewIfNeeded();
+        
+        this.logger.test.step('Scroll Into View Action', 'scrollIntoView', { selector });
+      } catch (error) {
+        this.logger.warn('Failed to scroll element into view', {
+          selector,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    });
+  }
+
+  /**
+   * Get console messages from page
+   * @returns Array of console messages
+   */
+  getConsoleLogs(): string[] {
+    const messages: string[] = [];
+    
+    this.page.on('console', msg => {
+      messages.push(`[${msg.type()}] ${msg.text()}`);
+    });
+
+    this.page.on('pageerror', error => {
+      messages.push(`[error] ${error.message}`);
+    });
+
+    return messages;
   }
 
   /**
@@ -509,18 +610,6 @@ export class BasePage {
   }
 
   /**
-   * Scroll element into view
-   * @param selector - Element selector
-   */
-  async scrollIntoView(selector: string): Promise<void> {
-    await this.allure.timedStep(`Scroll into view: ${selector}`, async () => {
-      await this.page.locator(selector).scrollIntoViewIfNeeded();
-      
-      this.logger.test.step('Scroll Into View Action', 'scrollIntoView', { selector });
-    });
-  }
-
-  /**
    * Wait for a specific amount of time
    * @param milliseconds - Time to wait in milliseconds
    */
@@ -619,25 +708,6 @@ export class BasePage {
       });
       
       return result;
-    });
-  }
-
-  /**
-   * Get count of elements matching selector
-   * @param selector - Element selector
-   * @returns Count of matching elements
-   */
-  async getElementCount(selector: string): Promise<number> {
-    return await this.allure.timedStep(`Get element count: ${selector}`, async () => {
-      const count = await this.page.locator(selector).count();
-      
-      this.allure.addParameter('Element Count', count);
-      this.logger.test.step('Get Element Count Action', 'getElementCount', {
-        selector,
-        count
-      });
-      
-      return count;
     });
   }
 
@@ -907,20 +977,6 @@ export class BasePage {
         delay
       });
     });
-  }
-
-  /**
-   * Get browser console logs
-   * @returns Array of console messages
-   */
-  getConsoleLogs(): string[] {
-    const logs: string[] = [];
-    
-    this.page.on('console', msg => {
-      logs.push(`${msg.type()}: ${msg.text()}`);
-    });
-    
-    return logs;
   }
 
   /**

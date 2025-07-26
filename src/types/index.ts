@@ -111,7 +111,7 @@ export interface Environment {
     index?: number;
   }
   
-  // Employee data types (OrangeHRM specific)
+  // Employee data types
   export interface Employee {
     employeeId?: string;
     firstName: string;

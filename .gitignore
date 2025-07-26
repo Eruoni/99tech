@@ -145,3 +145,7 @@ vite.config.ts.timestamp-*
 /playwright/.cache/
 
 .claude
+allure-report/
+allure-results/
+config/
+test-artifacts/

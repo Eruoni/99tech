@@ -1,0 +1,25 @@
+{
+  "accounts": [
+    {
+      "username": "Admin",
+      "password": "admin123",
+      "role": "Admin",
+      "description": "System administrator with full access",
+      "active": true
+    },
+    {
+      "username": "sample99",
+      "password": "test1234",
+      "role": "ESS",
+      "description": "Employee self-service user",
+      "active": true
+    },
+    {
+      "username": "sample99-disabled",
+      "password": "test1234",
+      "role": "ESS",
+      "description": "Employee self-service user",
+      "active": false
+    }
+  ]
+}

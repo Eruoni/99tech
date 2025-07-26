@@ -3,7 +3,6 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { Browser, BrowserContext, Page } from '@playwright/test';
 import logger from '../config/logger.js';
-import type { Cookie, TestData, UserCredentials } from '../types/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,153 +12,89 @@ const __dirname = path.dirname(__filename);
  */
 export class TestUtils {
   /**
-   * Load authentication state from file
-   * @param authFile - Path to authentication state file
-   * @returns Authentication state object
-   */
-  static async loadAuthState(authFile: string = 'auth/state.json'): Promise<any> {
-    try {
-      const authData = await fs.readFile(authFile, 'utf-8');
-      return JSON.parse(authData);
-    } catch (error) {
-      logger.warn('Failed to load authentication state', {
-        authFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return null;
-    }
-  }
-
-  /**
-   * Load cookies from file
-   * @param cookiesFile - Path to cookies file
-   * @returns Array of cookies
-   */
-  static async loadCookies(cookiesFile: string = 'auth/cookies.json'): Promise<Cookie[]> {
-    try {
-      const cookiesData = await fs.readFile(cookiesFile, 'utf-8');
-      return JSON.parse(cookiesData);
-    } catch (error) {
-      logger.warn('Failed to load cookies', {
-        cookiesFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      return [];
-    }
-  }
-
-  /**
-   * Load test data from file
+   * Load test data from file with generic type support
    * @param testDataFile - Path to test data file
-   * @returns Test data object
+   * @returns Test data object of specified type
    */
-  static async loadTestData(testDataFile: string = 'test-data/testData.json'): Promise<TestData> {
+  static async loadTestData<T = any>(testDataFile: string = 'test-data/testData.json'): Promise<T> {
     try {
       const testDataContent = await fs.readFile(testDataFile, 'utf-8');
-      return JSON.parse(testDataContent);
+      const parsedData = JSON.parse(testDataContent);
+      
+      logger.info('Test data loaded successfully', {
+        file: testDataFile,
+        dataKeys: Object.keys(parsedData),
+        fileSize: testDataContent.length
+      });
+      
+      return parsedData as T;
     } catch (error) {
-      logger.warn('Failed to load test data', {
+      logger.error('Failed to load test data', {
         testDataFile,
         error: error instanceof Error ? error.message : String(error)
       });
       
-      // Return default test data
-      return {
-        users: [{
-          username: process.env.USERNAME || 'Admin',
-          password: process.env.PASSWORD || 'admin123',
-          role: 'Admin'
-        }],
-        employees: [],
-        testUrls: {
-          login: '/web/index.php/auth/login',
-          dashboard: '/web/index.php/dashboard/index'
-        },
-        apiEndpoints: {
-          employees: '/pim/employees',
-          users: '/admin/users'
-        }
-      };
+      throw new Error(`Failed to load test data from ${testDataFile}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
   /**
-   * Save authentication state to file
-   * @param context - Browser context
-   * @param authFile - Path to save authentication state
+   * Load specific section from test data file
+   * @param section - Section name to extract
+   * @param testDataFile - Path to test data file
+   * @returns Specific section data
    */
-  static async saveAuthState(context: BrowserContext, authFile: string = 'auth/state.json'): Promise<void> {
+  static async loadTestDataSection<T = any>(section: string, testDataFile: string = 'test-data/testData.json'): Promise<T> {
     try {
-      await fs.mkdir(path.dirname(authFile), { recursive: true });
-      await context.storageState({ path: authFile });
+      const fullData = await this.loadTestData(testDataFile);
       
-      logger.info('Authentication state saved', { authFile });
+      if (!fullData[section]) {
+        throw new Error(`Section '${section}' not found in test data`);
+      }
+      
+      logger.debug('Test data section loaded', {
+        file: testDataFile,
+        section,
+        sectionType: typeof fullData[section]
+      });
+      
+      return fullData[section] as T;
     } catch (error) {
-      logger.error('Failed to save authentication state', {
-        authFile,
+      logger.error('Failed to load test data section', {
+        testDataFile,
+        section,
         error: error instanceof Error ? error.message : String(error)
       });
+      
       throw error;
     }
   }
 
   /**
-   * Save cookies to file
-   * @param context - Browser context
-   * @param cookiesFile - Path to save cookies
+   * Load environment-specific test data
+   * @param environment - Environment name (e.g., 'dev', 'staging', 'prod')
+   * @param fallbackFile - Fallback file if environment-specific file doesn't exist
+   * @returns Environment-specific test data
    */
-  static async saveCookies(context: BrowserContext, cookiesFile: string = 'auth/cookies.json'): Promise<void> {
+  static async loadEnvironmentTestData<T = any>(
+    environment: string = 'default',
+    fallbackFile: string = 'test-data/testData.json'
+  ): Promise<T> {
+    const envSpecificFile = `test-data/${environment}.json`;
+    
     try {
-      await fs.mkdir(path.dirname(cookiesFile), { recursive: true });
-      const cookies = await context.cookies();
-      await fs.writeFile(cookiesFile, JSON.stringify(cookies, null, 2));
-      
-      logger.info('Cookies saved', { cookiesFile, cookieCount: cookies.length });
+      // Try to load environment-specific file first
+      return await this.loadTestData<T>(envSpecificFile);
     } catch (error) {
-      logger.error('Failed to save cookies', {
-        cookiesFile,
+      logger.warn('Environment-specific test data not found, using fallback', {
+        environment,
+        envSpecificFile,
+        fallbackFile,
         error: error instanceof Error ? error.message : String(error)
       });
-      throw error;
-    }
-  }
-
-  /**
-   * Create browser context with authentication
-   * @param browser - Browser instance
-   * @param authFile - Path to authentication state file
-   * @returns Authenticated browser context
-   */
-  static async createAuthenticatedContext(
-    browser: Browser, 
-    authFile: string = 'auth/state.json'
-  ): Promise<BrowserContext> {
-    try {
-      const authState = await this.loadAuthState(authFile);
       
-      const context = await browser.newContext({
-        storageState: authState,
-        viewport: {
-          width: parseInt(process.env.VIEWPORT_WIDTH || '1280'),
-          height: parseInt(process.env.VIEWPORT_HEIGHT || '720')
-        },
-        recordVideo: {
-          dir: 'test-results/videos',
-          size: { width: 1280, height: 720 }
-        },
-        recordHar: {
-          path: 'test-results/network.har'
-        }
-      });
-
-      logger.debug('Authenticated context created');
-      return context;
-    } catch (error) {
-      logger.error('Failed to create authenticated context', {
-        authFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      throw error;
+      // Fall back to default file
+      return await this.loadTestData<T>(fallbackFile);
     }
   }
 
@@ -296,67 +231,6 @@ export class TestUtils {
   }
 
   /**
-   * Check if element exists without waiting
-   * @param page - Page instance
-   * @param selector - Element selector
-   * @returns True if element exists
-   */
-  static async elementExists(page: Page, selector: string): Promise<boolean> {
-    try {
-      const element = await page.$(selector);
-      return element !== null;
-    } catch {
-      return false;
-    }
-  }
-
-  /**
-   * Get element count
-   * @param page - Page instance
-   * @param selector - Element selector
-   * @returns Number of matching elements
-   */
-  static async getElementCount(page: Page, selector: string): Promise<number> {
-    try {
-      return await page.locator(selector).count();
-    } catch {
-      return 0;
-    }
-  }
-
-  /**
-   * Wait for page to be idle (no network activity)
-   * @param page - Page instance
-   * @param timeout - Timeout in milliseconds
-   */
-  static async waitForPageIdle(page: Page, timeout: number = 30000): Promise<void> {
-    try {
-      await page.waitForLoadState('networkidle', { timeout });
-    } catch (error) {
-      logger.warn('Page idle wait timed out', {
-        timeout,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
-   * Scroll element into view
-   * @param page - Page instance
-   * @param selector - Element selector
-   */
-  static async scrollIntoView(page: Page, selector: string): Promise<void> {
-    try {
-      await page.locator(selector).scrollIntoViewIfNeeded();
-    } catch (error) {
-      logger.warn('Failed to scroll element into view', {
-        selector,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    }
-  }
-
-  /**
    * Handle file download
    * @param page - Page instance
    * @param triggerAction - Function that triggers the download
@@ -389,7 +263,7 @@ export class TestUtils {
   }
 
   /**
-   * Clear browser data
+   * Clear browser data (for OAuth 2.0 apps)
    * @param context - Browser context
    */
   static async clearBrowserData(context: BrowserContext): Promise<void> {
@@ -412,25 +286,6 @@ export class TestUtils {
         error: error instanceof Error ? error.message : String(error)
       });
     }
-  }
-
-  /**
-   * Get console messages from page
-   * @param page - Page instance
-   * @returns Array of console messages
-   */
-  static getConsoleMessages(page: Page): string[] {
-    const messages: string[] = [];
-    
-    page.on('console', msg => {
-      messages.push(`[${msg.type()}] ${msg.text()}`);
-    });
-
-    page.on('pageerror', error => {
-      messages.push(`[error] ${error.message}`);
-    });
-
-    return messages;
   }
 
   /**
@@ -637,55 +492,6 @@ export class TestUtils {
       headless: process.env.HEADLESS === 'true',
       timeout: parseInt(process.env.TIMEOUT || '30000'),
       workers: parseInt(process.env.WORKERS || '4')
-    };
-  }
-
-  /**
-   * Validate test data structure
-   * @param testData - Test data to validate
-   * @returns Validation result
-   */
-  static validateTestData(testData: any): {
-    isValid: boolean;
-    errors: string[];
-  } {
-    const errors: string[] = [];
-
-    if (!testData) {
-      errors.push('Test data is null or undefined');
-      return { isValid: false, errors };
-    }
-
-    // Check required properties
-    const requiredProperties = ['users', 'testUrls', 'apiEndpoints'];
-    for (const prop of requiredProperties) {
-      if (!testData[prop]) {
-        errors.push(`Missing required property: ${prop}`);
-      }
-    }
-
-    // Validate users array
-    if (testData.users && Array.isArray(testData.users)) {
-      for (let i = 0; i < testData.users.length; i++) {
-        const user = testData.users[i];
-        if (!user.username || !user.password) {
-          errors.push(`User at index ${i} missing username or password`);
-        }
-      }
-    }
-
-    // Validate URLs
-    if (testData.testUrls) {
-      for (const [key, url] of Object.entries(testData.testUrls)) {
-        if (typeof url === 'string' && url.startsWith('http') && !this.isValidUrl(url)) {
-          errors.push(`Invalid URL for ${key}: ${url}`);
-        }
-      }
-    }
-
-    return {
-      isValid: errors.length === 0,
-      errors
     };
   }
 

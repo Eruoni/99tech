@@ -35,7 +35,7 @@ export class LoginPage extends BasePage {
     forgotPasswordLink: `//*[text()='Forgot your password? ']`,
     
     // Success indicators (post-login)
-    dashboard: '.oxd-topbar-header-breadcrumb',
+    dashboard: '.oxd-topbar-header-breadcrumb h6',
     userDropdown: '.oxd-userdropdown-name',
     sideMenu: '.oxd-main-menu'
   };
@@ -287,19 +287,16 @@ export class LoginPage extends BasePage {
     return await this.allure.timedStep('Check Login Success', async () => {
       try {
         const currentUrl = await this.getCurrentUrl();
-        const isDashboard = currentUrl.includes('/dashboard/') || 
-                           currentUrl.includes('/pim/') || 
-                           currentUrl.includes('/admin/');
+        const isDashboard = currentUrl.includes('/dashboard/')
         
-        const hasUserDropdown = await this.isVisible(this.selectors.userDropdown);
-        const isSuccessful = isDashboard && hasUserDropdown;
+        const text = await this.getText(this.selectors.dashboard)
+        expect(text).toEqual('Dashboard')
         
         this.allure.addParameter('Current URL', currentUrl);
         this.allure.addParameter('Is Dashboard', isDashboard);
-        this.allure.addParameter('Has User Dropdown', hasUserDropdown);
-        this.allure.addParameter('Login Successful', isSuccessful);
+        this.allure.addParameter('Login Successful', true);
         
-        return isSuccessful;
+        return true;
       } catch {
         return false;
       }

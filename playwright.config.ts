@@ -196,16 +196,6 @@ const config = defineConfig({
       },
       testMatch: env.BROWSER === 'mobile-safari' ? '**/*.spec.ts' : []
     },
-
-    // High DPI
-    {
-      name: 'Desktop Chrome HiDPI',
-      use: {
-        ...devices['Desktop Chrome HiDPI'],
-        headless: env.HEADLESS
-      },
-      testMatch: env.BROWSER === 'chromium' ? '**/*.spec.ts' : []
-    }
   ],
 
   // Output directory
@@ -237,13 +227,7 @@ const config = defineConfig({
     }
   })(),
 
-  // Web server for local development (optional)
-  webServer: process.env.CI ? undefined : {
-    command: 'echo "No local server needed - testing against demo site"',
-    port: 3000,
-    reuseExistingServer: !process.env.CI,
-    timeout: 120 * 1000,
-  }
+  // No web server needed - testing against external demo site
 });
 
 // Log final configuration
