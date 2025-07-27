@@ -144,7 +144,6 @@ vite.config.ts.timestamp-*
 /blob-report/
 /playwright/.cache/
 
-.claude
 allure-report/
 allure-results/
 config/
